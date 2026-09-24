@@ -1,142 +1,97 @@
 package com.fonuhuo.sevenrandom;
 
-import java.nio.ByteBuffer;
 import java.security.SecureRandom;
+import java.util.Arrays;
 import java.util.Random;
 
-/**
- * Generates three unbiased random integers and maps them through the standard
- * six-palace continuous counting order used by Xiao Liu Ren.
- */
 public final class RandomEngine {
-    public static final int MIN_VALUE = 1;
-    public static final int MAX_VALUE = 999;
-    public static final int CYCLE_SIZE = 6;
-
-    private static final String[] PALACE_NAMES = {
-            "大安", "留连", "速喜", "赤口", "小吉", "空亡"
-    };
+    public static final String[] PALACES = {"大安", "留连", "速喜", "赤口", "小吉", "空亡"};
 
     private final Random random;
-    private final SecureRandom secureRandom;
 
     public RandomEngine() {
         this(new SecureRandom());
     }
 
     RandomEngine(Random random) {
-        if (random == null) {
-            throw new IllegalArgumentException("random must not be null");
-        }
         this.random = random;
-        this.secureRandom = random instanceof SecureRandom ? (SecureRandom) random : null;
     }
 
     public int[] generateThree() {
-        return new int[] { nextValue(), nextValue(), nextValue() };
+        return new int[]{nextNumber(), nextNumber(), nextNumber()};
     }
 
-    /**
-     * Supplements the system-backed SecureRandom state with material from the
-     * exact touch that freezes a roll. This never replaces SecureRandom as the
-     * primary source; it only adds entropy to the already-seeded generator.
-     */
-    public void mixTouchEntropy(long nanoTime, long eventTimeMillis, float x, float y) {
-        if (secureRandom != null) {
-            secureRandom.setSeed(buildTouchEntropy(nanoTime, eventTimeMillis, x, y));
+    public RollResult generateResult() {
+        int[] numbers = generateThree();
+        return new RollResult(numbers, calculatePalaces(numbers));
+    }
+
+    public RollingSession newSession() {
+        return new RollingSession(this);
+    }
+
+    private int nextNumber() {
+        return random.nextInt(999) + 1;
+    }
+
+    public String[] calculatePalaces(int[] numbers) {
+        if (numbers == null || numbers.length != 3) {
+            throw new IllegalArgumentException("Exactly three numbers are required");
         }
+        int first = Math.floorMod(numbers[0] - 1, 6);
+        int second = Math.floorMod(first + numbers[1] - 1, 6);
+        int third = Math.floorMod(second + numbers[2] - 1, 6);
+        return new String[]{PALACES[first], PALACES[second], PALACES[third]};
     }
 
-    static byte[] buildTouchEntropy(long nanoTime, long eventTimeMillis, float x, float y) {
-        return ByteBuffer.allocate(24)
-                .putLong(nanoTime)
-                .putLong(eventTimeMillis)
-                .putInt(Float.floatToRawIntBits(x))
-                .putInt(Float.floatToRawIntBits(y))
-                .array();
+    private void mixTouchSeed(long eventTime, float x, float y) {
+        long seed = System.nanoTime()
+                ^ (eventTime << 21)
+                ^ ((long) Float.floatToIntBits(x) << 32)
+                ^ (Float.floatToIntBits(y) & 0xffffffffL);
+        random.setSeed(seed);
     }
 
-    private int nextValue() {
-        return random.nextInt(MAX_VALUE - MIN_VALUE + 1) + MIN_VALUE;
-    }
-
-    /**
-     * Counts the first step from Da An, then continues each later count from
-     * the previous landing palace. The current palace always counts as 1.
-     * Palace indexes are 1..6 in the order Da An, Liu Lian, Su Xi, Chi Kou,
-     * Xiao Ji, Kong Wang.
-     */
-    public static int[] calculatePalaces(int first, int second, int third) {
-        int firstPalace = advanceFrom(1, first);
-        int secondPalace = advanceFrom(firstPalace, second);
-        int thirdPalace = advanceFrom(secondPalace, third);
-        return new int[] { firstPalace, secondPalace, thirdPalace };
-    }
-
-    private static int advanceFrom(int startPalace, int count) {
-        return ((startPalace - 1 + count - 1) % CYCLE_SIZE) + 1;
-    }
-
-    static final class RollingSession {
+    public static final class RollingSession {
         private final RandomEngine engine;
-        private boolean rolling = true;
+        private boolean stopped;
 
         RollingSession(RandomEngine engine) {
-            if (engine == null) {
-                throw new IllegalArgumentException("engine must not be null");
-            }
             this.engine = engine;
         }
 
-        boolean isRolling() {
-            return rolling;
-        }
-
-        int[] previewValues() {
-            if (!rolling) {
-                throw new IllegalStateException("session is stopped");
-            }
+        public int[] preview() {
+            if (stopped) throw new IllegalStateException("Session already stopped");
             return engine.generateThree();
         }
 
-        RollResult stop(long nanoTime, long eventTimeMillis, float x, float y) {
-            if (!rolling) {
-                throw new IllegalStateException("session is already stopped");
-            }
-            engine.mixTouchEntropy(nanoTime, eventTimeMillis, x, y);
-            int[] values = engine.generateThree();
-            int[] palaces = calculatePalaces(values[0], values[1], values[2]);
-            rolling = false;
-            return new RollResult(values, palaces);
-        }
-
-        void restart() {
-            rolling = true;
+        public RollResult stop(long eventTime, float x, float y) {
+            if (stopped) throw new IllegalStateException("Session already stopped");
+            stopped = true;
+            engine.mixTouchSeed(eventTime, x, y);
+            return engine.generateResult();
         }
     }
 
-    static final class RollResult {
-        private final int[] values;
-        private final int[] palaces;
+    public static final class RollResult {
+        private final int[] numbers;
+        private final String[] palaces;
 
-        RollResult(int[] values, int[] palaces) {
-            this.values = values.clone();
-            this.palaces = palaces.clone();
+        RollResult(int[] numbers, String[] palaces) {
+            this.numbers = Arrays.copyOf(numbers, numbers.length);
+            this.palaces = Arrays.copyOf(palaces, palaces.length);
         }
 
-        int[] values() {
-            return values.clone();
+        public int[] getNumbers() {
+            return Arrays.copyOf(numbers, numbers.length);
         }
 
-        int[] palaces() {
-            return palaces.clone();
+        public String[] getPalaces() {
+            return Arrays.copyOf(palaces, palaces.length);
         }
-    }
 
-    public static String palaceName(int palaceIndex) {
-        if (palaceIndex < 1 || palaceIndex > CYCLE_SIZE) {
-            throw new IllegalArgumentException("palace index must be 1..6");
+        public String getFinalPalace() {
+            return palaces[2];
         }
-        return PALACE_NAMES[palaceIndex - 1];
     }
 }
