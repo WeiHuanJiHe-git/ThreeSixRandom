@@ -3,36 +3,37 @@ name: Build Android APK
 on:
   workflow_dispatch:
   push:
-    branches: [ main ]
+    branches:
+      - main
 
 jobs:
   build:
     runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
 
-      - uses: actions/setup-java@v4
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Java 17
+        uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: '17'
 
-      
+      - name: Install Android SDK packages
+        shell: bash
+        run: |
+          SDKMANAGER="/usr/local/lib/android/sdk/cmdline-tools/latest/bin/sdkmanager"
+          yes | "$SDKMANAGER" --licenses >/dev/null || true
+          "$SDKMANAGER" "platforms;android-35" "build-tools;35.0.0"
 
-      - name: Install Android SDK
-  run: |
-    export ANDROID_SDK_ROOT=/usr/local/lib/android/sdk
-    SDKMANAGER=$(find "$ANDROID_SDK_ROOT/cmdline-tools" -type f -path "*/bin/sdkmanager" | sort -V | tail -n 1)
-
-    yes | "$SDKMANAGER" --licenses >/dev/null || true
-
-    "$SDKMANAGER" \
-      "platforms;android-35" \
-      "build-tools;35.0.0"
-      - uses: gradle/actions/setup-gradle@v4
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.10.2'
 
       - name: Core rule test
+        shell: bash
         run: |
           mkdir -p build/core-test
           javac -d build/core-test \
@@ -47,7 +48,8 @@ jobs:
       - name: Rename APK
         run: cp app/build/outputs/apk/debug/app-debug.apk ThreeSixRandom-v1.5.0.apk
 
-      - uses: actions/upload-artifact@v4
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
         with:
           name: ThreeSixRandom-v1.5.0-apk
           path: ThreeSixRandom-v1.5.0.apk
